@@ -1,0 +1,48 @@
+name: End-to-End CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  orchestrate-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+    - name: (Stage 1) Checkout Repository Source Code
+      uses: actions/checkout@v3
+
+    - name: (Stage 3) Initialize Python Environment
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: (Stage 3) Install Core Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest
+
+    - name: (Stage 3) Run Automated Test Suites
+      run: |
+        pytest test_app.py
+
+    - name: (Stage 4) Authenticate Container Registry (Docker Hub)
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: (Stage 4) Compile Container & Push Image with Unique Run Tag
+      run: |
+        docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/shopping-bill:${{ github.run_number }} .
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/shopping-bill:${{ github.run_number }}
+
+    - name: (Stage 5) Link Production Kubernetes Context
+      uses: azure/k8s-set-context@v3
+      with:
+        method: kubeconfig
+        kubeconfig: ${{ secrets.KUBECONFIG }}
+
+    - name: (Stage 5) Inline Inject Build Number Tag & Apply Live Manifests
+      run: |
+        sed -i "s|DOCKERHUB_USERNAME/shopping-bill:TAG_PLACEHOLDER|${{ secrets.DOCKERHUB_USERNAME }}/shopping-bill:${{ github.run_number }}|g" deployment.yaml
+        kubectl apply -f deployment.yaml
